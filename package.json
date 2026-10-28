@@ -1,0 +1,27 @@
+{
+  "name": "payment-screenshot-extractor",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run scripts/extract-payments.ts",
+    "extract": "bun run scripts/extract-payments.ts",
+    "ocr": "bun run scripts/ocr-image.ts",
+    "parse": "bun run scripts/parse-text.ts",
+    "check:images": "bun run scripts/check-public-images.ts",
+    "test": "bun test",
+    "test:unit": "bun test tests/parser tests/cli",
+    "test:integration": "bun test tests/integration",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "tesseract.js": "^7.0.0",
+    "zod": "^4.6.7"
+  }
+}
