@@ -228,14 +228,14 @@ function pickFee(text: string): number | null {
         `(?:مصاريف(?:\\s*الخدمه)?|الرسوم|رسوم(?:\\s*الخدمه)?|service\\s*fee|fees?)\\s*:?[\\s\\S]{0,35}?(${NUM})`,
         "gi",
       ),
-      score: 100,
+      score: 85,
     },
     {
       regex: new RegExp(
         `(${NUM})\\s*(?:جنيه|اجنيه|جم|ج\\.م|EGP|LE)?\\s*(?:مصاريف|الرسوم|رسوم)`,
         "gi",
       ),
-      score: 85,
+      score: 100,
     },
   ];
 
@@ -243,14 +243,37 @@ function pickFee(text: string): number | null {
   let best: NumberCandidate | null = null;
   let bestScore = 0;
 
+  const walletValues = [...text.matchAll(new RegExp(WALLET, "g"))].map(
+    (match) => match[0],
+  );
+
   for (const candidate of candidates) {
     if (candidate.value < 0 || isPhoneLike(candidate.raw)) continue;
 
-    const { before } = contextAround(text, candidate);
+    const { before, after } = contextAround(text, candidate);
     let score = candidate.score;
+
+    // Ignore digits that are just the trailing part of a wallet number that
+    // OCR collapsed onto the fee line. Only candidates that sit *before* the
+    // fee label (pattern 2) can be collapsed wallet digits; a fee that appears
+    // after the label is a real value.
+    const labelFollows = /(?:مصاريف|الرسوم|رسوم)/i.test(after);
+    if (
+      labelFollows &&
+      walletValues.some(
+        (wallet) =>
+          wallet.endsWith(candidate.raw) && candidate.raw.length <= 3,
+      )
+    ) {
+      continue;
+    }
 
     if (/(?:رصيد|balance|رقم\s*العمليه|transaction|مرجع|reference)/i.test(before)) {
       score -= 120;
+    }
+
+    if (candidate.value === 0) {
+      score -= 250;
     }
 
     if (score > bestScore) {

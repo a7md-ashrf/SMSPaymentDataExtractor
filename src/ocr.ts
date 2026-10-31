@@ -16,6 +16,8 @@ export type OcrResult = {
   confidence: number;
 };
 
+const WALLET_RE = /01[0125]\d{8}/g;
+
 function toImageBytes(image: ImageInput): Uint8Array {
   if (image instanceof ArrayBuffer) {
     return new Uint8Array(image);
@@ -23,6 +25,21 @@ function toImageBytes(image: ImageInput): Uint8Array {
 
   return new Uint8Array(image.buffer, image.byteOffset, image.byteLength);
 }
+
+function collectWallets(text: string): Set<string> {
+  return new Set(text.match(WALLET_RE) ?? []);
+}
+
+/**
+ * Recover wallet numbers that the primary (Arabic + English) OCR pass missed.
+ *
+ * Tesseract's Arabic model occasionally drops long English digit runs that are
+ * embedded in an Arabic SMS. A second pass with the English model reliably
+ * reads those runs, so we merge any wallet that is missing from the primary
+ * text. Only wallet-shaped numbers (01xxxxxxxxx) are added to avoid polluting
+ * the text with unrelated digit noise.
+ */
+// (no cached English worker; created per recognition to avoid lingering handles)
 
 /**
  * Start a Tesseract worker configured for screenshot OCR.
@@ -44,7 +61,7 @@ export async function createOcrWorker(
 }
 
 /** Run OCR on an ArrayBuffer, Buffer, or typed-array view. */
-export async function recognizeImage(
+async function recognizeWithWorker(
   worker: OcrWorker,
   image: ImageInput,
 ): Promise<OcrResult> {
@@ -56,4 +73,48 @@ export async function recognizeImage(
     text: data.text,
     confidence: data.confidence,
   };
+}
+
+export async function recognizeImage(
+  worker: OcrWorker,
+  image: ImageInput,
+): Promise<OcrResult> {
+  const primary = await recognizeWithWorker(worker, image);
+
+  // Only attempt a supplemental English pass when the primary text is missing
+  // wallet numbers. This keeps the common (already-complete) case fast.
+  const primaryWallets = collectWallets(primary.text);
+  let englishText: string | null = null;
+
+  let englishWorker: OcrWorker | null = null;
+  try {
+    englishWorker = await createOcrWorker("eng");
+    const english = await recognizeWithWorker(englishWorker, image);
+    englishText = english.text;
+  } catch {
+    englishText = null;
+  } finally {
+    if (englishWorker) {
+      try {
+        await englishWorker.terminate();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (englishText) {
+    const missing = [...collectWallets(englishText)].filter(
+      (wallet) => !primaryWallets.has(wallet),
+    );
+
+    if (missing.length > 0) {
+      return {
+        text: `${primary.text}\n${missing.join("\n")}`,
+        confidence: primary.confidence,
+      };
+    }
+  }
+
+  return primary;
 }
